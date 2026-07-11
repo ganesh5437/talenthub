@@ -1,0 +1,185 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  RECRUITER
+  CANDIDATE
+}
+
+enum CompanyStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  BLOCKED
+}
+
+enum JobStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum JobType {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum ApplicationStatus {
+  APPLIED
+  UNDER_REVIEW
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  SELECTED
+  OFFER_RELEASED
+  HIRED
+  REJECTED
+}
+
+enum InterviewResult {
+  PENDING
+  PASSED
+  FAILED
+}
+
+model User {
+  id          String     @id @default(uuid())
+  name        String
+  email       String     @unique
+  password    String
+  role        Role
+  isBlocked   Boolean    @default(false)
+  isVerified  Boolean    @default(false)
+  companyId   String?
+  company     Company?   @relation(fields: [companyId], references: [id])
+  candidate   Candidate?
+  createdJobs Job[]      @relation("RecruiterJobs")
+  auditLogs   AuditLog[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Company {
+  id          String        @id @default(uuid())
+  name        String
+  logoUrl     String?
+  description String?
+  website     String?
+  status      CompanyStatus @default(PENDING)
+  departments Department[]
+  users       User[]
+  jobs        Job[]
+  createdAt   DateTime      @default(now())
+}
+
+model Department {
+  id        String  @id @default(uuid())
+  name      String
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  jobs      Job[]
+}
+
+model Category {
+  id   String @id @default(uuid())
+  name String @unique
+  jobs Job[]
+}
+
+model Skill {
+  id   String @id @default(uuid())
+  name String @unique
+}
+
+model Job {
+  id           String        @id @default(uuid())
+  title        String
+  description  String
+  companyId    String
+  company      Company       @relation(fields: [companyId], references: [id])
+  departmentId String?
+  department   Department?   @relation(fields: [departmentId], references: [id])
+  categoryId   String?
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  recruiterId  String
+  recruiter    User          @relation("RecruiterJobs", fields: [recruiterId], references: [id])
+  skillsCsv    String?
+  salaryMin    Int?
+  salaryMax    Int?
+  experience   String?
+  type         JobType       @default(ONSITE)
+  status       JobStatus     @default(DRAFT)
+  applications Application[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Candidate {
+  id           String        @id @default(uuid())
+  userId       String        @unique
+  user         User          @relation(fields: [userId], references: [id])
+  resumeUrl    String?
+  skillsCsv    String?
+  experience   String?
+  education    String?
+  portfolio    String?
+  linkedin     String?
+  applications Application[]
+  savedJobs    SavedJob[]
+}
+
+model SavedJob {
+  id          String    @id @default(uuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  jobId       String
+  createdAt   DateTime  @default(now())
+}
+
+model Application {
+  id          String            @id @default(uuid())
+  jobId       String
+  job         Job               @relation(fields: [jobId], references: [id])
+  candidateId String
+  candidate   Candidate         @relation(fields: [candidateId], references: [id])
+  status      ApplicationStatus @default(APPLIED)
+  interviews  Interview[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model Interview {
+  id            String          @id @default(uuid())
+  applicationId String
+  application   Application     @relation(fields: [applicationId], references: [id])
+  round         Int             @default(1)
+  scheduledAt   DateTime
+  feedback      String?
+  result        InterviewResult @default(PENDING)
+  createdAt     DateTime        @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+}
