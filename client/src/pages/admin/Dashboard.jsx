@@ -1,24 +1,28 @@
-import { useState, useEffect } from 'react';
-import api from '../../api/axios';
-import Navbar from '../../components/Navbar';
+import { useState, useEffect, useCallback } from 'react';
+import api, { errorMessage } from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
+import { AppLayout } from '../../components/Navbar';
 import StatusBadge from '../../components/StatusBadge';
+import { Alert, Button, Card, PageHeader, PageLoader, StatCard } from '../../components/ui';
+import { formatStatus } from '../../utils/pipeline';
 
-const navLinks = [
-  { path: '/admin/dashboard', label: 'Dashboard' },
+const COMPANY_ACTIONS = [
+  { status: 'APPROVED', label: 'Approve', variant: 'success-soft' },
+  { status: 'REJECTED', label: 'Reject', variant: 'danger-soft' },
+  { status: 'BLOCKED', label: 'Block', variant: 'secondary' },
 ];
 
 const AdminDashboard = () => {
+  const { user: me } = useAuth();
   const [stats, setStats] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [users, setUsers] = useState([]);
   const [tab, setTab] = useState('companies');
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [flash, setFlash] = useState({ type: 'info', text: '' });
 
-  useEffect(() => {
-    loadAll();
-  }, []);
-
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     try {
       const [statsRes, companiesRes, usersRes] = await Promise.all([
         api.get('/admin/stats/platform'),
@@ -29,168 +33,156 @@ const AdminDashboard = () => {
       setCompanies(companiesRes.data);
       setUsers(usersRes.data);
     } catch (err) {
-      console.error(err);
+      setFlash({ type: 'error', text: errorMessage(err, 'Failed to load dashboard') });
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleCompanyStatus = async (id, status) => {
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  const handleCompanyStatus = async (company, status) => {
+    setBusyId(company.id);
     try {
-      await api.patch(`/companies/${id}/status`, { status });
-      loadAll();
+      await api.patch(`/companies/${company.id}/status`, { status });
+      setFlash({ type: 'success', text: `${company.name} is now ${status.toLowerCase()}.` });
+      await loadAll();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to update company');
+      setFlash({ type: 'error', text: errorMessage(err, 'Failed to update company') });
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleToggleBlock = async (id) => {
+  const handleToggleBlock = async (u) => {
+    setBusyId(u.id);
     try {
-      await api.patch(`/admin/users/${id}/block`);
-      loadAll();
+      const res = await api.patch(`/admin/users/${u.id}/block`);
+      setFlash({ type: 'success', text: `${u.name}: ${res.data.message.toLowerCase()}.` });
+      await loadAll();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to update user');
+      setFlash({ type: 'error', text: errorMessage(err, 'Failed to update user') });
+    } finally {
+      setBusyId(null);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50">
-        <Navbar links={navLinks} />
-        <p className="text-center py-10 text-slate-500">Loading...</p>
-      </div>
-    );
-  }
+  const pending = companies.filter((c) => c.status === 'PENDING').length;
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <Navbar links={navLinks} />
-      <div className="max-w-6xl mx-auto py-10 px-6">
-        <h1 className="text-2xl font-bold text-slate-800 mb-6">SuperAdmin Dashboard</h1>
+    <AppLayout>
+      <PageHeader title="Platform administration" subtitle="Approve companies, manage users and monitor the platform." />
+      <Alert type={flash.type} onClose={() => setFlash({ ...flash, text: '' })}>{flash.text}</Alert>
 
-        <div className="grid grid-cols-5 gap-4 mb-8">
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Total Users</p>
-            <p className="text-2xl font-bold text-slate-800">{stats?.totalUsers ?? 0}</p>
+      {loading ? (
+        <PageLoader />
+      ) : (
+        <>
+          <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+            <StatCard label="Users" value={stats?.totalUsers} />
+            <StatCard label="Companies" value={stats?.totalCompanies} accent="text-indigo-600" hint={pending ? `${pending} pending approval` : undefined} />
+            <StatCard label="Jobs" value={stats?.totalJobs} />
+            <StatCard label="Applications" value={stats?.totalApplications} />
+            <StatCard label="Hired" value={stats?.totalHired} accent="text-teal-600" />
           </div>
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Companies</p>
-            <p className="text-2xl font-bold text-indigo-600">{stats?.totalCompanies ?? 0}</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Total Jobs</p>
-            <p className="text-2xl font-bold text-slate-800">{stats?.totalJobs ?? 0}</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Applications</p>
-            <p className="text-2xl font-bold text-slate-800">{stats?.totalApplications ?? 0}</p>
-          </div>
-          <div className="bg-white rounded-xl shadow-sm p-5">
-            <p className="text-sm text-slate-500">Hired</p>
-            <p className="text-2xl font-bold text-teal-600">{stats?.totalHired ?? 0}</p>
-          </div>
-        </div>
 
-        <div className="flex gap-4 mb-4 border-b border-slate-200">
-          <button
-            onClick={() => setTab('companies')}
-            className={`pb-2 px-1 font-medium ${tab === 'companies' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500'}`}
-          >
-            Companies
-          </button>
-          <button
-            onClick={() => setTab('users')}
-            className={`pb-2 px-1 font-medium ${tab === 'users' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-500'}`}
-          >
-            Users
-          </button>
-        </div>
+          <div className="mb-4 flex gap-1 border-b border-slate-200">
+            {[
+              { key: 'companies', label: `Companies${pending ? ` (${pending} pending)` : ''}` },
+              { key: 'users', label: 'Users' },
+            ].map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                  tab === t.key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-        {tab === 'companies' && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="font-semibold text-slate-800 mb-4">All Companies</h2>
-            {companies.length === 0 ? (
-              <p className="text-slate-500 text-sm">No companies registered yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {companies.map((c) => (
-                  <div key={c.id} className="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-slate-800">{c.name}</p>
+          {tab === 'companies' && (
+            <Card className="divide-y divide-slate-100">
+              {companies.length === 0 ? (
+                <p className="p-6 text-sm text-slate-500">No companies registered yet.</p>
+              ) : (
+                companies.map((c) => (
+                  <div key={c.id} className="flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-slate-900">{c.name}</p>
                         <StatusBadge status={c.status} />
                       </div>
-                      <p className="text-xs text-slate-500">{c.description}</p>
+                      {c.description && <p className="mt-0.5 text-sm text-slate-500">{c.description}</p>}
+                      <p className="mt-1 text-xs text-slate-400">
+                        {c.users?.length || 0} member{c.users?.length === 1 ? '' : 's'} · {c._count?.jobs ?? 0} jobs
+                        {c.website && (
+                          <> · <a href={c.website} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">{c.website}</a></>
+                        )}
+                      </p>
                     </div>
-                    <div className="flex gap-2">
-                      {c.status !== 'APPROVED' && (
-                        <button
-                          onClick={() => handleCompanyStatus(c.id, 'APPROVED')}
-                          className="bg-green-100 text-green-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-200"
-                        >
-                          Approve
-                        </button>
-                      )}
-                      {c.status !== 'REJECTED' && (
-                        <button
-                          onClick={() => handleCompanyStatus(c.id, 'REJECTED')}
-                          className="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-red-200"
-                        >
-                          Reject
-                        </button>
-                      )}
-                      {c.status !== 'BLOCKED' && (
-                        <button
-                          onClick={() => handleCompanyStatus(c.id, 'BLOCKED')}
-                          className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-slate-200"
-                        >
-                          Block
-                        </button>
-                      )}
+                    <div className="flex flex-wrap gap-2">
+                      {COMPANY_ACTIONS.filter((a) => a.status !== c.status).map((a) => (
+                        <Button key={a.status} size="sm" variant={a.variant} disabled={busyId === c.id} onClick={() => handleCompanyStatus(c, a.status)}>
+                          {a.label}
+                        </Button>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                ))
+              )}
+            </Card>
+          )}
 
-        {tab === 'users' && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="font-semibold text-slate-800 mb-4">All Users</h2>
-            {users.length === 0 ? (
-              <p className="text-slate-500 text-sm">No users found.</p>
-            ) : (
-              <div className="space-y-3">
-                {users.map((u) => (
-                  <div key={u.id} className="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0">
-                    <div>
-                      <p className="font-medium text-slate-800">{u.name}</p>
-                      <p className="text-xs text-slate-500">{u.email} • {u.role}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {u.isBlocked && (
-                        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">Blocked</span>
-                      )}
-                      <button
-                        onClick={() => handleToggleBlock(u.id)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium ${
-                          u.isBlocked
-                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                            : 'bg-red-100 text-red-700 hover:bg-red-200'
-                        }`}
-                      >
-                        {u.isBlocked ? 'Unblock' : 'Block'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+          {tab === 'users' && (
+            <Card className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3 font-medium">Name</th>
+                    <th className="px-5 py-3 font-medium">Role</th>
+                    <th className="px-5 py-3 font-medium">Company</th>
+                    <th className="px-5 py-3 font-medium">Joined</th>
+                    <th className="px-5 py-3 text-right font-medium">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {users.map((u) => (
+                    <tr key={u.id}>
+                      <td className="px-5 py-3">
+                        <p className="font-medium text-slate-900">{u.name}</p>
+                        <p className="text-xs text-slate-500">{u.email}</p>
+                      </td>
+                      <td className="px-5 py-3 text-slate-600">{formatStatus(u.role)}</td>
+                      <td className="px-5 py-3 text-slate-600">{u.company?.name || '—'}</td>
+                      <td className="px-5 py-3 text-slate-500">{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td className="px-5 py-3 text-right">
+                        {u.role === 'SUPER_ADMIN' || u.id === me?.id ? (
+                          <span className="text-xs text-slate-400">—</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant={u.isBlocked ? 'success-soft' : 'danger-soft'}
+                            disabled={busyId === u.id}
+                            onClick={() => handleToggleBlock(u)}
+                          >
+                            {u.isBlocked ? 'Unblock' : 'Block'}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
+      )}
+    </AppLayout>
   );
 };
 
