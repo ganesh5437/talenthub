@@ -1,100 +1,165 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../../api/axios';
-import Navbar from '../../components/Navbar';
+import api, { errorMessage } from '../../api/axios';
+import { useAuth } from '../../context/AuthContext';
+import { AppLayout } from '../../components/Navbar';
 import StatusBadge from '../../components/StatusBadge';
-
-const navLinks = [
-  { path: '/recruiter/dashboard', label: 'My Jobs' },
-  { path: '/recruiter/post-job', label: 'Post Job' },
-];
+import ConfirmDialog from '../../components/ConfirmDialog';
+import { Alert, Button, Card, EmptyState, PageHeader, PageLoader, StatCard } from '../../components/ui';
+import { formatSalary, formatStatus } from '../../utils/pipeline';
 
 const RecruiterDashboard = () => {
+  const { user } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [flash, setFlash] = useState({ type: 'info', text: '' });
+  const [toDelete, setToDelete] = useState(null);
 
-  useEffect(() => {
-    fetchJobs();
-  }, []);
-
-  const fetchJobs = async () => {
+  const fetchJobs = useCallback(async () => {
     try {
       const res = await api.get('/jobs/my-jobs');
       setJobs(res.data);
     } catch (err) {
-      console.error(err);
+      setFlash({ type: 'error', text: errorMessage(err, 'Failed to load jobs') });
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const togglePublish = async (job) => {
-    const newStatus = job.status === 'PUBLISHED' ? 'CLOSED' : 'PUBLISHED';
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  const setJobStatus = async (job, status) => {
+    setBusyId(job.id);
     try {
-      await api.patch(`/jobs/${job.id}`, { status: newStatus });
-      fetchJobs();
+      await api.patch(`/jobs/${job.id}`, { status });
+      setFlash({ type: 'success', text: `"${job.title}" is now ${formatStatus(status).toLowerCase()}.` });
+      await fetchJobs();
     } catch (err) {
-      console.error(err);
+      setFlash({ type: 'error', text: errorMessage(err, 'Failed to update job') });
+    } finally {
+      setBusyId(null);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50">
-      <Navbar links={navLinks} />
-      <div className="max-w-5xl mx-auto py-10 px-6">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-slate-800">My Job Postings</h1>
-          <Link
-            to="/recruiter/post-job"
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
-          >
-            + Post New Job
-          </Link>
-        </div>
+  const deleteJob = async () => {
+    const job = toDelete;
+    setBusyId(job.id);
+    try {
+      await api.delete(`/jobs/${job.id}`);
+      setFlash({ type: 'success', text: `"${job.title}" deleted.` });
+      await fetchJobs();
+    } catch (err) {
+      setFlash({ type: 'error', text: errorMessage(err, 'Failed to delete job') });
+    } finally {
+      setBusyId(null);
+      setToDelete(null);
+    }
+  };
 
-        {loading ? (
-          <p className="text-slate-500">Loading...</p>
-        ) : jobs.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm p-10 text-center text-slate-500">
-            No jobs posted yet. Click "Post New Job" to get started.
+  const totalApplicants = jobs.reduce((n, j) => n + (j.applications?.length || 0), 0);
+  const hired = jobs.reduce((n, j) => n + (j.applications?.filter((a) => a.status === 'HIRED').length || 0), 0);
+  const isAdmin = user?.role === 'COMPANY_ADMIN';
+
+  return (
+    <AppLayout>
+      <PageHeader
+        title={isAdmin ? 'Company Jobs' : 'My Job Postings'}
+        subtitle={isAdmin ? 'Every job posted by your company.' : 'Manage your postings and review applicants.'}
+        actions={
+          <Link to="/recruiter/post-job" className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700">
+            + Post new job
+          </Link>
+        }
+      />
+
+      <Alert type={flash.type} onClose={() => setFlash({ ...flash, text: '' })}>{flash.text}</Alert>
+
+      {loading ? (
+        <PageLoader label="Loading jobs…" />
+      ) : (
+        <>
+          <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <StatCard label="Total jobs" value={jobs.length} />
+            <StatCard label="Published" value={jobs.filter((j) => j.status === 'PUBLISHED').length} accent="text-emerald-600" />
+            <StatCard label="Applicants" value={totalApplicants} accent="text-indigo-600" />
+            <StatCard label="Hired" value={hired} accent="text-teal-600" />
           </div>
-        ) : (
-          <div className="space-y-4">
-            {jobs.map((job) => (
-              <div key={job.id} className="bg-white rounded-xl shadow-sm p-5 flex justify-between items-center">
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <h3 className="font-semibold text-slate-800">{job.title}</h3>
-                    <StatusBadge status={job.status} />
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    {job.type} • {job.experience || 'Any experience'} • {job.applications?.length || 0} applicants
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Link
-                    to={`/recruiter/jobs/${job.id}/applicants`}
-                    className="bg-slate-100 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-200 transition"
-                  >
-                    View Applicants
-                  </Link>
-                  <button
-                    onClick={() => togglePublish(job)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                      job.status === 'PUBLISHED'
-                        ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                        : 'bg-green-50 text-green-600 hover:bg-green-100'
-                    }`}
-                  >
-                    {job.status === 'PUBLISHED' ? 'Close' : 'Publish'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+
+          {jobs.length === 0 ? (
+            <EmptyState
+              title="No jobs posted yet"
+              description="Create your first job posting to start receiving applications."
+              action={<Link to="/recruiter/post-job" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Post a job</Link>}
+            />
+          ) : (
+            <div className="space-y-4">
+              {jobs.map((job) => {
+                const count = job.applications?.length || 0;
+                const active = job.applications?.filter((a) => !['HIRED', 'REJECTED'].includes(a.status)).length || 0;
+                const salary = formatSalary(job.salaryMin, job.salaryMax);
+                return (
+                  <Card key={job.id} className="p-5">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="truncate font-semibold text-slate-900">{job.title}</h3>
+                          <StatusBadge status={job.status} />
+                        </div>
+                        <p className="mt-1 text-sm text-slate-500">
+                          {formatStatus(job.type)} · {job.experience || 'Any experience'}
+                          {salary && ` · ${salary}`}
+                          {isAdmin && job.recruiter && ` · by ${job.recruiter.name}`}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          <strong>{count}</strong> applicant{count === 1 ? '' : 's'}
+                          {count > 0 && <span className="text-slate-400"> · {active} in progress</span>}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Link
+                          to={`/recruiter/jobs/${job.id}/applicants`}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          View applicants
+                        </Link>
+                        {job.status === 'PUBLISHED' ? (
+                          <Button size="sm" variant="secondary" loading={busyId === job.id} onClick={() => setJobStatus(job, 'CLOSED')}>
+                            Close
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="success-soft" loading={busyId === job.id} onClick={() => setJobStatus(job, 'PUBLISHED')}>
+                            {job.status === 'CLOSED' ? 'Reopen' : 'Publish'}
+                          </Button>
+                        )}
+                        {count === 0 && (
+                          <Button size="sm" variant="danger-soft" disabled={busyId === job.id} onClick={() => setToDelete(job)}>
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      <ConfirmDialog
+        open={!!toDelete}
+        title="Delete this job?"
+        message={<>"{toDelete?.title}" will be permanently deleted.</>}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={!!busyId}
+        onConfirm={deleteJob}
+        onCancel={() => setToDelete(null)}
+      />
+    </AppLayout>
   );
 };
 
